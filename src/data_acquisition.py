@@ -16,7 +16,14 @@ def make_dataset(export_dir: str = None) -> None:
     posts = funcs.parse_linkedin_export(export_dir)
 
     # Retrieve post content from LinkedIn, add post content string and word count
-    # posts = funcs.get_posts(posts)
+    posts_with_content = funcs.get_posts(posts)
+    
+    # Save the resulting dataset
+    output_path = os.path.join(os.path.dirname(export_dir), 'processed_posts.csv')
+    posts_with_content.to_csv(output_path, index=False)
+    print(f"\nDataset saved to: {output_path}")
+    
+    return posts_with_content
 
 
 if __name__ == "__main__":
