@@ -9,46 +9,55 @@ import re
 from typing import Dict, Any
 
 
-def parse_linkedin_export() -> dict:
-    '''Parser for Linkedin analyicts export xlxs file. Finds most recent export file
-    in data/linkedin_exports. Retreives Post URL, Post publish date and Impressions from
-    ENGAGEMENT sheet. Returns result as a dictionary.
+def parse_linkedin_export(export_dir: str) -> dict:
+    '''Parser for Linkedin analytics export xlxs file. Finds most recent export file
+    in data/linkedin_exports. Retrieves Post URL, Post publish date and Impressions from
+    TOP POSTS sheet. Returns result as a dictionary.
     '''
     
     # Find the most recent export file in data/linkedin_exports
-    export_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'linkedin_exports')
     xlsx_files = glob.glob(os.path.join(export_dir, '*.xlsx'))
-    
+
+    print(f'Export directory: {export_dir}')
+    print(f'Found {len(xlsx_files)} files: {xlsx_files}')
+
     if not xlsx_files:
         raise FileNotFoundError("No LinkedIn export files found in data/linkedin_exports/")
     
     # Get the most recent file based on modification time
     most_recent_file = max(xlsx_files, key=os.path.getmtime)
     
-    # Read the ENGAGEMENT sheet from the Excel file
+    # Read the TOP POSTS sheet from the Excel file
     try:
-        df = pd.read_excel(most_recent_file, sheet_name='ENGAGEMENT')
+        df = pd.read_excel(most_recent_file, sheet_name='TOP POSTS')
 
     except Exception as e:
-        raise ValueError(f"Could not read ENGAGEMENT sheet from {most_recent_file}: {e}")
+        raise ValueError(f"Could not read TOP POSTS sheet from {most_recent_file}: {e}")
+
+    # Select impressions table columns
+    df = df[['Unnamed: 4', 'Unnamed: 5', 'Unnamed: 6']]
+
+    # The third row in the dataframe contains the column headers
+    df.columns = df.iloc[1]
+
+    # Get rid of the rest of the unnecessary rows
+    df = df.iloc[2:]
     
-    # Create dictionary with post data
-    posts = {}
+    # Convert Impressions column to integer
+    if 'Impressions' in df.columns:
+        df['Impressions'] = pd.to_numeric(df['Impressions'], errors='coerce').astype('Int64')
     
-    # Iterate through the dataframe and extract relevant columns
-    for idx, row in df.iterrows():
-        post_id = f"post_{idx}"
-        posts[post_id] = {
-            'post_url': row.get('Post URL', ''),
-            'publish_date': row.get('Post publish date', ''),
-            'impressions': row.get('Impressions', 0)
-        }
+    # Convert Post publish date to datetime
+    if 'Post publish date' in df.columns:
+        df['Post publish date'] = pd.to_datetime(df['Post publish date'], errors='coerce')
     
-    return posts
+    print(df.info())
+    
+    return df
 
 
 def get_posts(posts) -> dict:
-    '''Takes dictionary of posts from parse_linkedin_export(), uses requests to retreive
+    '''Takes dictionary of posts from parse_linkedin_export(), uses requests to retrieve
     post text from Post URL. Adds cleaned and normalized text and word count to post
     record in posts dictionary, returns the updated dictionary.'''
     
