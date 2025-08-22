@@ -14,62 +14,39 @@ from bs4 import BeautifulSoup
 
 
 
-def parse_linkedin_export(export_dir: str) -> pd.DataFrame:
-    '''Parser for Linkedin analytics export xlxs file. Finds most recent export file
-    in data/linkedin_exports. Retrieves Post URL, Post publish date and Impressions from
-    TOP POSTS sheet. Returns result as a dataframe.
+def parse_post_history(data_file: str) -> pd.DataFrame:
+    '''Parser for Linkedin posts xlxs file. Retrieves Post URL, and Impressions.
+    Returns result as a dataframe.
     '''
     
-    # Find the most recent export file in data/linkedin_exports
-    xlsx_files = glob.glob(os.path.join(export_dir, '*.xlsx'))
-
-    print(f'Export directory: {export_dir}')
-    print(f'Found {len(xlsx_files)} files: {xlsx_files}')
-
-    if not xlsx_files:
-        raise FileNotFoundError('No LinkedIn export files found in data/linkedin_exports/')
-    
-    # Get the most recent file based on modification time
-    most_recent_file = max(xlsx_files, key=os.path.getmtime)
-    
-    # Read the TOP POSTS sheet from the Excel file
     try:
 
         # Suppress warnings from pandas
         with warnings.catch_warnings():
             warnings.simplefilter('ignore') 
-            df = pd.read_excel(most_recent_file, sheet_name='TOP POSTS')
+            df = pd.read_excel(data_file, sheet_name='Sheet1')
+            print(df.head())
 
     except Exception as e:
-        raise ValueError(f'Could not read TOP POSTS sheet from {most_recent_file}: {e}')
+        raise ValueError(f'Could not read Sheet1 sheet from {data_file}: {e}')
 
-    # Select impressions table columns
-    df = df[['Unnamed: 4', 'Unnamed: 5', 'Unnamed: 6']]
-
-    # The third row in the dataframe contains the column headers
-    df.columns = df.iloc[1]
-
-    # Get rid of the rest of the unnecessary rows
-    df = df.iloc[2:]
+    # Select columns
+    df = df[['impressions', 'post_url']]
 
     # Clean up the index
     df.reset_index(drop=True, inplace=True)
-    
-    # Convert Impressions column to integer
-    if 'Impressions' in df.columns:
-        df['Impressions'] = pd.to_numeric(df['Impressions'], errors='coerce').astype('Int64')
-    
-    # Convert Post publish date to datetime
-    if 'Post publish date' in df.columns:
-        df['Post publish date'] = pd.to_datetime(df['Post publish date'], errors='coerce')
+
+    # Convert impressions column to integer
+    if 'impressions' in df.columns:
+        df['impressions'] = pd.to_numeric(df['impressions'], errors='coerce').astype('Int64')
     
     # Check the column names to ensure the parse was successful
-    if ','.join(df.columns) == 'Post URL,Post publish date,Impressions':
+    if ','.join(df.columns) == 'impressions,post_url':
         print(df.head())
         return df
 
     else:
-        raise ValueError('Unexpected column names found in LinkedIn export.')
+        raise ValueError('Unexpected column names found in input file export.')
 
 
 def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
@@ -86,12 +63,12 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
     df['n_tags'] = 0
     df['external_link'] = False
     df['media'] = False
-    df['post_day'] = ''
     
     # Process each post in the DataFrame
     for index, row in df.iterrows():
 
-        url = row.get('Post URL', '')
+        url = row.get('post_url', '')
+        url = url.split('?')[0]
         
         print(f"Processing post {index + 1}/{len(df)}: {url}")
         
@@ -116,27 +93,14 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
         # Calculate word count
         word_count = len(cleaned_content.split()) if cleaned_content else 0
         
-        # Extract day of the week from post publish date
-        publish_date = row.get('Post publish date')
-        post_day = ''
-
-        if pd.notna(publish_date) and publish_date is not None:
-            try:
-                # Get the day name (Monday, Tuesday, etc.)
-                post_day = publish_date.strftime('%A')
-            except (AttributeError, ValueError):
-                # Handle cases where the date might not be properly parsed
-                post_day = ''
-        
         # Update the DataFrame using .loc to ensure proper assignment
         df.loc[index, 'post_text'] = cleaned_content
         df.loc[index, 'word_count'] = word_count
         df.loc[index, 'n_tags'] = n_tags
         df.loc[index, 'external_link'] = external_link
         df.loc[index, 'media'] = has_media
-        df.loc[index, 'post_day'] = post_day
         
-        print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}, Media: {has_media}, Day: {post_day}")
+        print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}, Media: {has_media}")
         
         # Add random sleep to prevent hitting the site too hard
         sleep_time = random.uniform(2, 5)  # Random sleep between 2-5 seconds
@@ -181,69 +145,23 @@ def _clean_text(text: str) -> str:
     return text
 
 def _detect_tags(raw_content: str) -> int:
-    '''Count users, companies, and hashtags tagged in the raw post content.
+    '''Count hashtags in the raw post content.
     
-    Returns the total number of LinkedIn tags found.
-    LinkedIn tags include @mentions, hashtags (#), and HTML-based user/company references.
+    Returns the number of hashtags (# symbols prepended to strings) found.
     '''
     
     if not raw_content:
         return 0
     
-    tag_count = 0
-    
-    # Parse the raw content with BeautifulSoup
+    # Parse the raw content with BeautifulSoup to get clean text
     soup = BeautifulSoup(raw_content, 'html.parser')
-    
-    # Look for common LinkedIn tag patterns in HTML
-    tag_indicators = [
-        # LinkedIn user/company mentions often have these classes or attributes
-        'a[href*="/in/"]',  # User profile links
-        'a[href*="/company/"]',  # Company profile links
-        '.feed-shared-actor__name',  # Actor name mentions
-        '.feed-shared-actor__title',  # Actor title mentions
-        '[data-entity-urn*="person"]',  # Person entity URNs
-        '[data-entity-urn*="company"]',  # Company entity URNs
-        '.mention',  # General mention class
-        '.tagged-mention',  # Tagged mention class
-    ]
-    
-    # Check for HTML-based tag indicators
-    for selector in tag_indicators:
-        elements = soup.select(selector)
-        tag_count += len(elements)
-    
-    # Check for @mentions and hashtags in text (fallback for text-based detection)
     text_content = soup.get_text()
     
-    # Look for @username and hashtag patterns (basic pattern matching)
-    import re
-    mention_patterns = [
-        r'@[a-zA-Z0-9._-]+',  # Basic @username pattern
-        r'@\w+\s+\w+',  # @FirstName LastName pattern
-        r'#\w+',  # Hashtag pattern (very common on LinkedIn)
-    ]
+    # Look for hashtag pattern: # followed by word characters
+    hashtag_pattern = r'#\w+'
+    matches = re.findall(hashtag_pattern, text_content)
     
-    for pattern in mention_patterns:
-        matches = re.findall(pattern, text_content)
-        tag_count += len(matches)
-    
-    # Look for phrases that typically indicate tagging
-    tag_phrases = [
-        'tagged',
-        'mentioned',
-        'thanks to',
-        'kudos to',
-        'shout out to',
-        'thanks for',
-    ]
-    
-    text_lower = text_content.lower()
-    for phrase in tag_phrases:
-        if phrase in text_lower:
-            tag_count += 1
-    
-    return tag_count
+    return len(matches)
 
 
 def _detect_external_link(raw_content: str) -> bool:
@@ -277,7 +195,8 @@ def _detect_media(html_content: str) -> bool:
     og_image = soup.find('meta', property='og:image')
     if og_image:
         content_url = og_image.get('content', '')
-        if 'https://media.licdn.com/dms/image' in content_url:
+        print(content_url)
+        if re.match(r"https://media.licdn.com/dms/image/sync/v2/.+/articleshare", content_url) or 'https://static.licdn.com/aero-v1' in content_url:
             return True
     
     return False
