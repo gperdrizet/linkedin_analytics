@@ -81,9 +81,10 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
     # Initialize new columns
     df['post_text'] = ''
     df['word_count'] = 0
-    df['raw_text'] = ''
     df['n_tags'] = 0
     df['external_link'] = False
+    df['media'] = False
+    df['post_day'] = ''
     
     # Process each post in the DataFrame
     for index, row in df.iterrows():
@@ -95,37 +96,58 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
         
         print(f"Processing post {index + 1}/{len(df)}: {url}")
         
-        # Extract post content from URL
-        raw_content = _extract_post_content(url)
+        # Download post HTML
+        html_content = _download_post_html(url)
         
+        # Extract post text content from HTML
+        raw_text_content = _extract_post_content(html_content)
+
+        # Check for tags (users or companies) in the raw content
+        n_tags = _detect_tags(raw_text_content)
+        
+        # Check for external links (LinkedIn's lnkd.in redirector)
+        external_link = _detect_external_link(raw_text_content)
+
+        # Check for media content using the HTML
+        has_media = _detect_media(html_content)
+
         # Clean and normalize the text
-        cleaned_content = _clean_text(raw_content)
+        cleaned_content = _clean_text(raw_text_content)
         
         # Calculate word count
         word_count = len(cleaned_content.split()) if cleaned_content else 0
         
-        # Check for tags (users or companies) in the raw content
-        n_tags = _detect_tags(raw_content)
-        
-        # Check for external links (LinkedIn's lnkd.in redirector)
-        external_link = _detect_external_link(raw_content)
+        # Extract day of the week from post publish date
+        publish_date = row.get('Post publish date')
+        post_day = ''
+        if pd.notna(publish_date) and publish_date is not None:
+            try:
+                # Get the day name (Monday, Tuesday, etc.)
+                post_day = publish_date.strftime('%A')
+            except (AttributeError, ValueError):
+                # Handle cases where the date might not be properly parsed
+                post_day = ''
         
         # Update the DataFrame using .loc to ensure proper assignment
         df.loc[index, 'post_text'] = cleaned_content
         df.loc[index, 'word_count'] = word_count
-        df.loc[index, 'raw_text'] = raw_content
         df.loc[index, 'n_tags'] = n_tags
         df.loc[index, 'external_link'] = external_link
+        df.loc[index, 'media'] = has_media
+        df.loc[index, 'post_day'] = post_day
         
-        print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}")
+        print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}, Media: {has_media}, Day: {post_day}")
     
     print(f"\nProcessed {len(df)} posts successfully")
+    
+    # Clean up column names: replace spaces with underscores and make lowercase
+    df.columns = df.columns.str.replace(' ', '_').str.lower()
 
     return df
 
 
 def _clean_text(text: str) -> str:
-    '''Clean and normalize text by removing extra whitespace and special characters.'''
+    '''Clean and normalize text by removing extra whitespace, special characters, and external links.'''
 
     if not text:
         return ""
@@ -133,11 +155,23 @@ def _clean_text(text: str) -> str:
     # Remove HTML tags if any
     text = BeautifulSoup(text, 'html.parser').get_text()
     
+    # Remove LinkedIn external links (lnkd.in redirects)
+    # Pattern matches various forms: https://lnkd.in/..., httpslnkd.in..., lnkd.in/...
+    text = re.sub(r'https?://lnkd\.in/[a-zA-Z0-9_-]+', '', text)  # Standard format
+    text = re.sub(r'httpslnkd\.in[a-zA-Z0-9_-]+', '', text)  # Mangled format without colon/slash
+    text = re.sub(r'lnkd\.in/[a-zA-Z0-9_-]+', '', text)  # Short format
+    
+    # Remove other common external link patterns
+    text = re.sub(r'https?://[^\s]+', '', text)  # Remove any remaining URLs
+    
     # Remove extra whitespace and normalize
     text = re.sub(r'\s+', ' ', text.strip())
     
-    # Remove special characters but keep basic punctuation
-    text = re.sub(r'[^\w\s.,!?-]', '', text)
+    # Clean up floating punctuation by removing preceding whitespace
+    text = re.sub(r'\s+([.!?,:;])', r'\1', text)  # Remove space before punctuation
+    
+    # Remove special characters but keep basic punctuation and forward slashes
+    text = re.sub(r'[^\w\s.,!?/-]', '', text)
     
     return text
 
@@ -206,6 +240,7 @@ def _detect_tags(raw_content: str) -> int:
     
     return tag_count
 
+
 def _detect_external_link(raw_content: str) -> bool:
     '''Detect if external links are present in the raw post content.
     
@@ -219,8 +254,35 @@ def _detect_external_link(raw_content: str) -> bool:
     # Check for LinkedIn's external link redirector
     return 'https://lnkd.in' in raw_content
 
-def _extract_post_content(url: str) -> str:
-    '''Extract post content from LinkedIn post URL.'''
+
+def _detect_media(html_content: str) -> bool:
+    '''Detect if media content is present in the raw post HTML.
+    
+    Returns True if an og:image meta tag with a LinkedIn media URL is found, False otherwise.
+    This specifically looks for LinkedIn's image sharing system.
+    '''
+    
+    if not html_content:
+        return False
+    
+    # Parse the raw content with BeautifulSoup
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Look for og:image meta tag with LinkedIn media URL
+    og_image = soup.find('meta', property='og:image')
+    if og_image:
+        content_url = og_image.get('content', '')
+        if 'https://media.licdn.com/dms/image' in content_url:
+            return True
+    
+    return False
+
+
+def _download_post_html(url: str) -> str:
+    '''Download HTML content from LinkedIn post URL.
+    
+    Returns the raw HTML content as a string, or empty string if download fails.
+    '''
     
     if not url:
         return ""
@@ -238,41 +300,38 @@ def _extract_post_content(url: str) -> str:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Try different selectors to find post content
-        content_selectors = [
-            '.feed-shared-text__text-view',
-            '.feed-shared-update-v2__commentary',
-            '.feed-shared-text',
-            'span[dir="ltr"]',
-            '.break-words'
-        ]
-        
-        for selector in content_selectors:
-            elements = soup.select(selector)
-            if elements:
-                # Get text from all matching elements and join them
-                text_parts = [elem.get_text().strip() for elem in elements if elem.get_text().strip()]
-                if text_parts:
-                    return ' '.join(text_parts)
-        
-        # Fallback: try to find any text content in common post areas
-        post_areas = soup.find_all(['div', 'span'], class_=lambda x: x and any(
-            keyword in x.lower() for keyword in ['text', 'content', 'commentary', 'post']
-        ))
-        
-        for area in post_areas:
-            text = area.get_text().strip()
-            if text and len(text) > 20:  # Assume meaningful content is longer than 20 chars
-                return text
-        
-        return ""
+        return response.text
         
     except requests.RequestException as e:
         print(f"Error fetching content from {url}: {e}")
         return ""
-
+    
     except Exception as e:
-        print(f"Error parsing content from {url}: {e}")
+        print(f"Error downloading from {url}: {e}")
+        return ""
+
+
+def _extract_post_content(html_content: str) -> str:
+    '''Extract post text content from LinkedIn post HTML.
+    
+    Takes raw HTML content and extracts the main post text from the meta description tag.
+    '''
+    
+    if not html_content:
+        return ""
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Look for meta tag with name="description" in the head section
+        description_meta = soup.find('meta', attrs={'name': 'description'})
+        if description_meta:
+            content = description_meta.get('content', '')
+            if content:
+                return content.strip()
+        
+        return ""
+        
+    except Exception as e:
+        print(f"Error parsing HTML content: {e}")
         return ""
