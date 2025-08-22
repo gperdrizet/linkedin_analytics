@@ -3,7 +3,7 @@
 import os
 import helper_functions as funcs
 
-def make_dataset(export_dir: str = None) -> None:
+def make_dataset(export_dir: str = None, output_dir: str = None) -> None:
     '''Retrieves and parses posts from most recent LinkedIn analytics export in data/linkedin exports.
     Saves resulting dataset to data/impressions.csv.
     
@@ -16,14 +16,12 @@ def make_dataset(export_dir: str = None) -> None:
     posts = funcs.parse_linkedin_export(export_dir)
 
     # Retrieve post content from LinkedIn, add post content string and word count
-    posts_with_content = funcs.get_posts(posts)
+    posts = funcs.get_posts(posts)
     
-    # Save the resulting dataset
-    output_path = os.path.join(os.path.dirname(export_dir), 'processed_posts.csv')
-    posts_with_content.to_csv(output_path, index=False)
-    print(f"\nDataset saved to: {output_path}")
-    
-    return posts_with_content
+    # Save the processed DataFrame to CSV
+    csv_filename = os.path.join(output_dir, 'posts.csv')
+    posts.to_csv(csv_filename, index=False)
+    print(f"Processed data saved to: {csv_filename}")
 
 
 if __name__ == "__main__":
@@ -31,8 +29,8 @@ if __name__ == "__main__":
     # Use the current working directory to construct the path to linkedin exports
     current_dir = os.getcwd()
     export_path = os.path.join(current_dir, 'data', 'linkedin_exports')
-    
+    output_path = os.path.join(current_dir, 'data')
+
     print(f"Current working directory: {current_dir}")
-    print(f"Looking for LinkedIn exports in: {export_path}")
-    
-    make_dataset(export_path)
+
+    make_dataset(export_path, output_path)
