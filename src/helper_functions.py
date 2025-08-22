@@ -2,7 +2,9 @@
 
 import glob
 import os
+import random
 import re
+import time
 import warnings
 from typing import Dict, Any
 
@@ -89,9 +91,6 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
     # Process each post in the DataFrame
     for index, row in df.iterrows():
 
-        if index >= 1:
-            break
-
         url = row.get('Post URL', '')
         
         print(f"Processing post {index + 1}/{len(df)}: {url}")
@@ -120,6 +119,7 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
         # Extract day of the week from post publish date
         publish_date = row.get('Post publish date')
         post_day = ''
+
         if pd.notna(publish_date) and publish_date is not None:
             try:
                 # Get the day name (Monday, Tuesday, etc.)
@@ -137,6 +137,11 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
         df.loc[index, 'post_day'] = post_day
         
         print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}, Media: {has_media}, Day: {post_day}")
+        
+        # Add random sleep to prevent hitting the site too hard
+        sleep_time = random.uniform(2, 5)  # Random sleep between 2-5 seconds
+        print(f"  - Sleeping for {sleep_time:.1f} seconds...")
+        time.sleep(sleep_time)
     
     print(f"\nProcessed {len(df)} posts successfully")
     
