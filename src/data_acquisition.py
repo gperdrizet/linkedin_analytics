@@ -3,7 +3,7 @@
 import os
 import helper_functions as funcs
 
-def make_dataset(export_dir: str = None, output_dir: str = None) -> None:
+def make_dataset(data_file: str = None, output_dir: str = None) -> None:
     '''Parses LinkedIn posts from complete_post_history.xlsx. Uses URL to retreive post text from
     LinkedIn. Extracts the following features: impressions, post_text, word_count, n_tags, external_link, media.
     Returns the result as a dataframe.'''

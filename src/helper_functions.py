@@ -6,12 +6,12 @@ import random
 import re
 import time
 import warnings
+from datetime import datetime
 from typing import Dict, Any
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-
 
 
 def parse_post_history(data_file: str) -> pd.DataFrame:
@@ -63,6 +63,7 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
     df['n_tags'] = 0
     df['external_link'] = False
     df['media'] = False
+    df['post_date'] = ''
     
     # Process each post in the DataFrame
     for index, row in df.iterrows():
@@ -87,6 +88,9 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
         # Check for media content using the HTML
         has_media = _detect_media(html_content)
 
+        # Extract post date from URL
+        post_date = _get_post_date(url)
+
         # Clean and normalize the text
         cleaned_content = _clean_text(raw_text_content)
         
@@ -99,8 +103,9 @@ def get_posts(posts_df: pd.DataFrame) -> pd.DataFrame:
         df.loc[index, 'n_tags'] = n_tags
         df.loc[index, 'external_link'] = external_link
         df.loc[index, 'media'] = has_media
+        df.loc[index, 'post_date'] = post_date
         
-        print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}, Media: {has_media}")
+        print(f"  - Extracted {word_count} words, Tags found: {n_tags}, External link: {external_link}, Media: {has_media}, Date: {post_date}")
         
         # Add random sleep to prevent hitting the site too hard
         sleep_time = random.uniform(2, 5)  # Random sleep between 2-5 seconds
@@ -232,6 +237,61 @@ def _download_post_html(url: str) -> str:
     
     except Exception as e:
         print(f"Error downloading from {url}: {e}")
+        return ""
+
+
+def _get_post_date(url: str) -> str:
+    '''Extract post date from LinkedIn post URL.
+    
+    LinkedIn post IDs are 64-bit integers where the first 41 bits represent
+    the timestamp in milliseconds since Unix epoch (January 1, 1970).
+    
+    Args:
+        url (str): LinkedIn post URL containing the post ID
+        
+    Returns:
+        str: Post date in ISO format (YYYY-MM-DD), or empty string if extraction fails
+    '''
+    
+    if not url:
+        return ""
+    
+    try:
+        # Extract post ID from URL using regex
+        # Matches patterns like: activity-7138259296076619777
+        id_match = re.search(r'activity-(\d+)', url)
+        if not id_match:
+            return ""
+        
+        post_id = int(id_match.group(1))
+
+        # Convert post ID to binary representation
+        binary_repr = bin(post_id)[2:]  # Remove '0b' prefix
+        
+        # Extract the first 41 bits (pad with zeros if necessary)
+        if len(binary_repr) >= 41:
+            first_41_bits = binary_repr[:41]
+        else:
+            # If binary representation is shorter than 41 bits, pad with leading zeros
+            first_41_bits = binary_repr.zfill(41)[:41]
+        
+        # Convert the first 41 bits back to base 10 integer (timestamp in milliseconds)
+        timestamp_ms = int(first_41_bits, 2)
+        
+        # Convert from milliseconds to seconds for datetime
+        timestamp_s = timestamp_ms / 1000.0
+        
+        # Create datetime object and format as ISO date
+        post_date = datetime.fromtimestamp(timestamp_s)
+
+        return post_date.strftime('%Y-%m-%d')
+        
+    except (ValueError, OverflowError, OSError) as e:
+        print(f"Error extracting date from URL {url}: {e}")
+        return ""
+    
+    except Exception as e:
+        print(f"Unexpected error extracting date from URL {url}: {e}")
         return ""
 
 
